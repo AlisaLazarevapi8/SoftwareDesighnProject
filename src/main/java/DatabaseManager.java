@@ -1,5 +1,7 @@
 import java.sql.*;
 import java.text.SimpleDateFormat;
+import java.util.HashMap;
+import java.util.Map;
 
 public class DatabaseManager {
     private static String URL;
@@ -55,7 +57,7 @@ public class DatabaseManager {
     }
 
     public void deleteUser(Integer Id) {
-        String sql = "DELETE FROM users WHERE id = ?";
+        String sql = "DELETE FROM users WHERE id = ?"; //
 
         try (Connection conn = connect();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -119,35 +121,40 @@ public class DatabaseManager {
         } catch (SQLException e) {
             result.setLength(0);
             result.append("Ошибка при получении пользователей: ").append(e.getMessage());
-            e.printStackTrace();
+            e.printStackTrace(); //так кстате давно никто не пишет держу в курсеее
         }
 
         return result.toString();
     }
 
 
-    public String getUserByBirthday(String date) {
+    public Map<Long, String> getUserByBirthday(String date) {
         ensureTableExists();
 
-        StringBuilder result = new StringBuilder();
-        String sql = "SELECT username FROM users WHERE birthdate = ?";
+        Map<Long, String> users = new HashMap<>();
+        //StringBuilder result = new StringBuilder();
+        String sql = "SELECT chat_id, username FROM users WHERE birthdate = ?"; //не нравится мне все это
+
 
         try (Connection conn = connect();
-             PreparedStatement pstmt = conn.prepareStatement(sql);
-             ResultSet rs = pstmt.executeQuery()) {
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
-            while (rs.next()) {
-                String username = rs.getString("username");
-                result.append(username);
+            pstmt.setString(1, date); // пронесло можно считать
+
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    Long chatId = rs.getLong("chat_id");
+                    String username = rs.getString("username");
+                    users.put(chatId, username);
+                }
             }
 
         } catch (SQLException e) {
-            result.setLength(0);
-            result.append("Ошибка при получении пользователей: ").append(e.getMessage());
+            System.out.println("Ошибка при получении пользователей: " + e.getMessage());
             e.printStackTrace();
         }
 
-        return result.toString();
+        return users;
     }
 
     private void ensureTableExists() {
