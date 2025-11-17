@@ -4,6 +4,8 @@ import com.pengrad.telegrambot.model.Update;
 import com.pengrad.telegrambot.request.SendMessage;
 import com.pengrad.telegrambot.response.SendResponse;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -56,11 +58,18 @@ public class Bot {
 
                 case "WAITING_FOR_DATE":
                     String name = tempNames.get(chatId);
-                    String date = command;
+                    String dateStr = command;
 
-                    if (isValidDate(date)) {
-                        dbManager.addUser(chatId, name, date);
-                        sendMessage(bot, chatId, "Поздравлю " + name + " в " + date);
+                    if (isValidDate(dateStr)) {
+                        try{
+                            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+                            LocalDate birthdate = LocalDate.parse(dateStr, formatter);
+
+                            dbManager.addUser(chatId, name, birthdate);
+                            sendMessage(bot, chatId, "ура работает)");
+                        } catch (Exception e){
+                            sendMessage(bot, chatId, "что то сломалось");
+                        }
                     } else {
                         sendMessage(bot, chatId, "Неверный формат даты. Используйте DD.MM.YYYY");
                     }

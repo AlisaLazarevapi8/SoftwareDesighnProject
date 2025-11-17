@@ -1,5 +1,7 @@
 import java.sql.*;
 import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -21,7 +23,8 @@ public class DatabaseManager {
                 "id SERIAL PRIMARY KEY, " +
                 "chat_id BIGINT NOT NULL, " +
                 "username VARCHAR(255), " +
-                "birthdate VARCHAR(255), " +
+                //"birthdate VARCHAR(255), " +
+                "birthdate DATE, " +
                 "registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)";
 
         try (Connection conn = connect();
@@ -32,11 +35,11 @@ public class DatabaseManager {
 
         } catch (SQLException e) {
             System.out.println("Ошибка при создании таблицы: " + e.getMessage());
-            e.printStackTrace();
+            e.printStackTrace(); // осуждаю
         }
     }
-
-    public void addUser(Long chatId, String username, String birthdate) {
+//string birthday
+    public void addUser(Long chatId, String username, LocalDate birthdate) {
         ensureTableExists();
 
         String sql = "INSERT INTO users (chat_id, username, birthdate) VALUES (?, ?, ?)";
@@ -46,7 +49,7 @@ public class DatabaseManager {
 
             pstmt.setLong(1, chatId);
             pstmt.setString(2, username);
-            pstmt.setString(3, birthdate);
+            pstmt.setDate(3, Date.valueOf(birthdate)); //тяжело
 
             pstmt.executeUpdate();
             System.out.println("Пользователь добавлен: chatId=" + chatId + ", name=" + username + ", date=" + birthdate);
@@ -57,7 +60,7 @@ public class DatabaseManager {
     }
 
     public void deleteUser(Integer Id) {
-        String sql = "DELETE FROM users WHERE id = ?"; //
+        String sql = "DELETE FROM users WHERE id = ?";
 
         try (Connection conn = connect();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -155,6 +158,41 @@ public class DatabaseManager {
         }
 
         return users;
+    }
+
+    public String getUpcomingBirthdays() {
+        ensureTableExists();
+
+        StringBuilder result = new StringBuilder();
+
+        String sql = "SELECT username, birthdate FROM users" +
+                "WHERE (EXTRACT(MONTH FROM birthdate) > EXTRACT(MONTH FROM CURRENT_DATE" +
+                "OR (EXTRACT(MONTH FROM birthdate) > EXTRACT(MONTH FROM CURRENT_DATE" +
+                "AND (EXTRACT(MONTH FROM birthdate) >= EXTRACT(MONTH FROM CURRENT_DATE" +
+                "ORDER BY EXTRACT(MONTH FROM birthdate), EXTRACT(DAY FROM birthdate)";
+
+        try(Connection conn = connect();
+        PreparedStatement pstmt = conn.prepareStatement(sql);
+        ResultSet rs  = pstmt.executeQuery();){
+            result.append("Ближайшие дни рождения: \n");
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+
+            int counter = 0;
+            while (rs.next()){
+                counter++;
+                String username = rs.getString("username");
+                java.util.Date birthdate = rs.getDate("birthdate");
+                String formattedDate = LocalDate.ofEpochDay(birthdate.getTime() / (24 * 60 * 60 * 1000)).format(formatter);
+
+                result.append(String.format("%s - %s\n", username, formattedDate));
+            }
+            if (counter == 0){
+                result.append("В ближайший месяц нет дней рождений)");
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+        return result.toString();
     }
 
     private void ensureTableExists() {
