@@ -194,7 +194,7 @@ public class DatabaseManager {
         }
         return result.toString();
     }
-
+    //чиним гит
     private void ensureTableExists() {
         try (Connection conn = connect();
              Statement stmt = conn.createStatement()) {
