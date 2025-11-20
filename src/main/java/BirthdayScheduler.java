@@ -1,8 +1,11 @@
 import com.pengrad.telegrambot.TelegramBot;
+import com.pengrad.telegrambot.request.SendMessage;
 
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -44,10 +47,19 @@ public class BirthdayScheduler {
     private void checkBirthdays(LocalDate userBD) {
         try {
             LocalDate today = LocalDate.now();
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+            String dateString = userBD.format(formatter);
 
-            if (userBD.equals(today)) {
-                String name = this.database.getUserByBirthday(userBD.toString());
-                String message = "🎉 Сегодня день рождения у "+ name +"! Поздравляю!";
+            Map<Long, String> users = this.database.getUserByBirthday(dateString);
+
+            for (Map.Entry<Long, String> entry : users.entrySet()) {
+                Long chatId = entry.getKey();
+                String name = entry.getValue();
+                String message = "🎉 Сегодня день рождения у " + name + "! Поздравляю!";
+
+                //вроде работает
+                SendMessage congratulation = new SendMessage(chatId, message);
+                bot.execute(congratulation);
             }
 
         } catch (Exception e) {

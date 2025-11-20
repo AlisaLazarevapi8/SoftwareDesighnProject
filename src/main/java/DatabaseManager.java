@@ -1,5 +1,9 @@
 import java.sql.*;
 import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
+import java.util.Map;
 
 public class DatabaseManager {
     private static String URL;
@@ -19,7 +23,8 @@ public class DatabaseManager {
                 "id SERIAL PRIMARY KEY, " +
                 "chat_id BIGINT NOT NULL, " +
                 "username VARCHAR(255), " +
-                "birthdate VARCHAR(255), " +
+                //"birthdate VARCHAR(255), " +
+                "birthdate DATE, " +
                 "registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)";
 
         try (Connection conn = connect();
@@ -30,11 +35,11 @@ public class DatabaseManager {
 
         } catch (SQLException e) {
             System.out.println("Ошибка при создании таблицы: " + e.getMessage());
-            e.printStackTrace();
+            e.printStackTrace(); // осуждаю
         }
     }
-
-    public void addUser(Long chatId, String username, String birthdate) {
+//string birthday
+    public void addUser(Long chatId, String username, LocalDate birthdate) {
         ensureTableExists();
 
         String sql = "INSERT INTO users (chat_id, username, birthdate) VALUES (?, ?, ?)";
@@ -44,7 +49,7 @@ public class DatabaseManager {
 
             pstmt.setLong(1, chatId);
             pstmt.setString(2, username);
-            pstmt.setString(3, birthdate);
+            pstmt.setDate(3, Date.valueOf(birthdate)); //тяжело
 
             pstmt.executeUpdate();
             System.out.println("Пользователь добавлен: chatId=" + chatId + ", name=" + username + ", date=" + birthdate);
@@ -119,37 +124,77 @@ public class DatabaseManager {
         } catch (SQLException e) {
             result.setLength(0);
             result.append("Ошибка при получении пользователей: ").append(e.getMessage());
-            e.printStackTrace();
+            e.printStackTrace(); //так кстате давно никто не пишет держу в курсеее
         }
 
         return result.toString();
     }
 
 
-    public String getUserByBirthday(String date) {
+    public Map<Long, String> getUserByBirthday(String date) {
         ensureTableExists();
 
-        StringBuilder result = new StringBuilder();
-        String sql = "SELECT username FROM users WHERE birthdate = ?";
+        Map<Long, String> users = new HashMap<>();
+        //StringBuilder result = new StringBuilder();
+        String sql = "SELECT chat_id, username FROM users WHERE birthdate = ?"; //не нравится мне все это
+
 
         try (Connection conn = connect();
-             PreparedStatement pstmt = conn.prepareStatement(sql);
-             ResultSet rs = pstmt.executeQuery()) {
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
-            while (rs.next()) {
-                String username = rs.getString("username");
-                result.append(username);
+            pstmt.setString(1, date); // пронесло можно считать
+
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    Long chatId = rs.getLong("chat_id");
+                    String username = rs.getString("username");
+                    users.put(chatId, username);
+                }
             }
 
         } catch (SQLException e) {
-            result.setLength(0);
-            result.append("Ошибка при получении пользователей: ").append(e.getMessage());
+            System.out.println("Ошибка при получении пользователей: " + e.getMessage());
             e.printStackTrace();
         }
 
-        return result.toString();
+        return users;
     }
 
+    public String getUpcomingBirthdays() {
+        ensureTableExists();
+
+        StringBuilder result = new StringBuilder();
+
+        String sql = "SELECT username, birthdate FROM users" +
+                "WHERE (EXTRACT(MONTH FROM birthdate) > EXTRACT(MONTH FROM CURRENT_DATE" +
+                "OR (EXTRACT(MONTH FROM birthdate) > EXTRACT(MONTH FROM CURRENT_DATE" +
+                "AND (EXTRACT(MONTH FROM birthdate) >= EXTRACT(MONTH FROM CURRENT_DATE" +
+                "ORDER BY EXTRACT(MONTH FROM birthdate), EXTRACT(DAY FROM birthdate)";
+
+        try(Connection conn = connect();
+        PreparedStatement pstmt = conn.prepareStatement(sql);
+        ResultSet rs  = pstmt.executeQuery();){
+            result.append("Ближайшие дни рождения: \n");
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+
+            int counter = 0;
+            while (rs.next()){
+                counter++;
+                String username = rs.getString("username");
+                java.util.Date birthdate = rs.getDate("birthdate");
+                String formattedDate = LocalDate.ofEpochDay(birthdate.getTime() / (24 * 60 * 60 * 1000)).format(formatter);
+
+                result.append(String.format("%s - %s\n", username, formattedDate));
+            }
+            if (counter == 0){
+                result.append("В ближайший месяц нет дней рождений)");
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+        return result.toString();
+    }
+    //чиним гит
     private void ensureTableExists() {
         try (Connection conn = connect();
              Statement stmt = conn.createStatement()) {
