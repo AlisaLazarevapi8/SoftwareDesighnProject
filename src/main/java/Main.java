@@ -4,7 +4,8 @@ public class Main {
         String url = args[1];
         String username = args[2];
         String password = args[3];
-        Bot.start(token, url, username, password);
+        String apiToken = args[4];
+        Bot.start(token, url, username, password, apiToken);
 
         System.out.println("Бот запущен...");
     }

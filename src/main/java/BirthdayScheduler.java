@@ -15,6 +15,8 @@ public class BirthdayScheduler {
     private final TelegramBot bot;
     private final DatabaseManager database;
 
+    private final HuggingFaceDialoGPT huggingFaceDialoGPT = new HuggingFaceDialoGPT();
+
     public BirthdayScheduler(TelegramBot myBot, DatabaseManager myDatabase) {
         this.scheduler = Executors.newScheduledThreadPool(1);
         this.bot = myBot;
@@ -35,7 +37,7 @@ public class BirthdayScheduler {
         } else {
             initialDelay = Duration.between(now, targetTime.plusHours(24)).toMinutes();
         }
-
+//
         scheduler.scheduleAtFixedRate(() -> {
                     LocalDate today = LocalDate.now();
                     checkBirthdays(date);

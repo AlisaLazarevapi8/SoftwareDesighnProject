@@ -4,6 +4,15 @@ import com.pengrad.telegrambot.model.Update;
 import com.pengrad.telegrambot.request.SendMessage;
 import com.pengrad.telegrambot.response.SendResponse;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParser;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -13,7 +22,7 @@ public class Bot {
     private static final Map<Long, String> userStates = new HashMap<>();
     private static final Map<Long, String> tempNames = new HashMap<>();
 
-    public static void start(String botToken, String url, String username, String password) {
+    public static void start(String botToken, String url, String username, String password, String apiToken) {
         TelegramBot bot = new TelegramBot(botToken);
         DatabaseManager dbManager = new DatabaseManager();
         dbManager.createUsersTable(url, username, password);
@@ -35,9 +44,10 @@ public class Bot {
                                 + "Как мной пользоваться:\n"
                                 + "/newBirthday - добавить день рождения в базу\n"
                                 + "/allBirthdays - посмотреть все дни рождения в базе\n"
-                                + "/deleteBirthday - удалить день рождения из базы\n");
+                                + "/deleteBirthday - удалить день рождения из базы\n"
+                                + "/поздравь - получить сгенерированное поздравление\n");
                     } else {
-                        handleCommand(bot, chatId, messageText, dbManager);
+                        handleCommand(bot, chatId, messageText, dbManager, apiToken);
                     }
                 }
             }
@@ -45,7 +55,7 @@ public class Bot {
         });
     }
 
-    private static void handleCommand(TelegramBot bot, Long chatId, String command, DatabaseManager dbManager) {
+    private static void handleCommand(TelegramBot bot, Long chatId, String command, DatabaseManager dbManager, String apiToken) {
         String userState = userStates.get(chatId);
 
         if (userState != null) {
@@ -66,9 +76,9 @@ public class Bot {
                             LocalDate birthdate = LocalDate.parse(dateStr, formatter);
 
                             dbManager.addUser(chatId, name, birthdate);
-                            sendMessage(bot, chatId, "ура работает)");
+                            sendMessage(bot, chatId, "Ура, день рождения добавлен!");
                         } catch (Exception e){
-                            sendMessage(bot, chatId, "что то сломалось");
+                            sendMessage(bot, chatId, "Что-то сломалось при добавлении.");
                         }
                     } else {
                         sendMessage(bot, chatId, "Неверный формат даты. Используйте DD.MM.YYYY");
@@ -78,11 +88,15 @@ public class Bot {
                     tempNames.remove(chatId);
                     return;
 
-                case "WAITING_FOR_ID_TO_DELETE":
-                    Integer id = Integer.parseInt(command);
 
-                    dbManager.deleteUser(id);
-                    sendMessage(bot, chatId, "Пользователь " + id + "удален из базы.");
+                case "WAITING_FOR_ID_TO_DELETE":
+                    try {
+                        Integer id = Integer.parseInt(command);
+                        dbManager.deleteUser(id);
+                        sendMessage(bot, chatId, "Пользователь " + id + " удалён из базы.");
+                    } catch (NumberFormatException e) {
+                        sendMessage(bot, chatId, "Неверный id для удаления.");
+                    }
 
                     userStates.remove(chatId);
                     tempNames.remove(chatId);
@@ -90,22 +104,30 @@ public class Bot {
             }
         }
 
-        switch (command) {
-            case "/newBirthday":
+        switch (command.toLowerCase()) {
+            case "/newbirthday":
                 userStates.put(chatId, "WAITING_FOR_NAME");
                 sendMessage(bot, chatId, "Кого поздравляем? (введите имя)");
                 break;
 
-            case "/allBirthdays":
+            case "/allbirthdays":
                 String res = dbManager.getAllUsers();
                 sendMessage(bot, chatId, res);
                 break;
 
-            case "/deleteBirthday":
+            case "/deletebirthday":
                 userStates.put(chatId, "WAITING_FOR_ID_TO_DELETE");
                 String res2del = dbManager.getAllUsers();
                 sendMessage(bot, chatId, res2del);
                 sendMessage(bot, chatId, "Напишите id пользователя, которого хотите удалить");
+                break;
+
+            case "/поздравь":
+                sendMessage(bot, chatId, "Генерируем поздравление... Пожалуйста, подождите.");
+                String prompt = "Поздравление с днем рождения";
+                String jsonResponse = generateGreeting(prompt, apiToken);
+                String greeting = parseGeneratedText(jsonResponse);
+                sendMessage(bot, chatId, greeting);
                 break;
 
             default:
@@ -122,6 +144,40 @@ public class Bot {
 
     private static void sendMessage(TelegramBot bot, Long chatId, String text) {
         SendMessage request = new SendMessage(chatId, text);
-        SendResponse response = bot.execute(request);
+        bot.execute(request);
+    }
+
+    private static String generateGreeting(String prompt, String apiToken) {
+        try {
+            String jsonRequest = "{\"inputs\":\"" + prompt + "\"}";
+
+            HttpClient client = HttpClient.newHttpClient();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create("https://api-inference.huggingface.co/models/microsoft/DialoGPT-large"))
+                    .header("Authorization", "Bearer " + apiToken)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonRequest))
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            return response.body();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "Ошибка при генерации поздравления";
+        }
+    }
+
+    private static String parseGeneratedText(String jsonResponse) {
+        try {
+            JsonElement element = JsonParser.parseString(jsonResponse);
+            JsonArray array = element.getAsJsonArray();
+            if (array.size() > 0) {
+                return array.get(0).getAsJsonObject().get("generated_text").getAsString();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return "Не удалось получить сгенерированный текст";
     }
 }
