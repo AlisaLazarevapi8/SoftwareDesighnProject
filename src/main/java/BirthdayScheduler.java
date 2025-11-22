@@ -5,17 +5,23 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class BirthdayScheduler {
+    private static final Logger LOGGER = Logger.getLogger(BirthdayScheduler.class.getName());
+
     private final ScheduledExecutorService scheduler;
     private final TelegramBot bot;
     private final DatabaseManager database;
 
-    private final HuggingFaceDialoGPT huggingFaceDialoGPT = new HuggingFaceDialoGPT();
+    private  static final int CHECK_HOUR = 9;
+    private static final int CHECK_MINUTE = 0;
 
     public BirthdayScheduler(TelegramBot myBot, DatabaseManager myDatabase) {
         this.scheduler = Executors.newScheduledThreadPool(1);
@@ -23,12 +29,13 @@ public class BirthdayScheduler {
         this.database = myDatabase;
     }
 
-    public void start(LocalDate date) {
-        scheduleDailyCheck(9, 0, date);
+    public void start() {
+        LOGGER.info("Начало работы планировщика");
+        scheduleDailyCheck();
     }
 
-    private void scheduleDailyCheck(int hour, int minute, LocalDate date) {
-        LocalTime targetTime = LocalTime.of(hour, minute);
+    private void scheduleDailyCheck() {
+        LocalTime targetTime = LocalTime.of(CHECK_HOUR, CHECK_MINUTE);
         LocalTime now = LocalTime.now();
 
         long initialDelay;
@@ -38,39 +45,51 @@ public class BirthdayScheduler {
             initialDelay = Duration.between(now, targetTime.plusHours(24)).toMinutes();
         }
 //
-        scheduler.scheduleAtFixedRate(() -> {
-                    LocalDate today = LocalDate.now();
-                    checkBirthdays(date);
-                }, initialDelay,
+        scheduler.scheduleAtFixedRate(
+                this::checkBirthdays,
+                initialDelay,
                 24 * 60,
-                TimeUnit.MINUTES);
+                TimeUnit.MINUTES
+        );
     }
 
-    private void checkBirthdays(LocalDate userBD) {
+    private void checkBirthdays() {
         try {
-            LocalDate today = LocalDate.now();
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy");
-            String dateString = userBD.format(formatter);
+            LOGGER.info("проверка дней рождений");
 
-            Map<Long, String> users = this.database.getUserByBirthday(dateString);
+            List<User> todayBirthdays = database.getTodayBirthdays();
 
-            for (Map.Entry<Long, String> entry : users.entrySet()) {
-                Long chatId = entry.getKey();
-                String name = entry.getValue();
-                String message = "🎉 Сегодня день рождения у " + name + "! Поздравляю!";
+            if (todayBirthdays.isEmpty()) {
+                LOGGER.info("Сегодня нет дней рождений");
+                return;
+            }
 
-                //вроде работает
-                SendMessage congratulation = new SendMessage(chatId, message);
-                bot.execute(congratulation);
+            LOGGER.info("Сегодня " + todayBirthdays.size() + " дней рождений");
+
+            for (User user : todayBirthdays) {
+                sendCongratulation(user);
             }
 
         } catch (Exception e) {
-            System.err.println("Error in birthday check: " + e.getMessage());
-            e.printStackTrace();
+            LOGGER.log(Level.SEVERE, "Ошибка при проверке дней рождений", e);
+        }
+    }
+
+    private void sendCongratulation(User user) {
+        try {
+            String message = String.format(" Сегодня день рождения у %s! Поздравляю! 🎂", user.getName());
+            SendMessage request = new SendMessage(user.getTelegramId(), message);
+
+            bot.execute(request);
+            LOGGER.info("Congratulation sent to " + user.getName() + " (ID: " + user.getTelegramId() + ")");
+
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Failed to send congratulation to user: " + user.getTelegramId(), e);
         }
     }
 
     public void stop() {
+        LOGGER.info("Stopping birthday scheduler");
         scheduler.shutdown();
         try {
             if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {

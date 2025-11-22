@@ -2,7 +2,6 @@ import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.UpdatesListener;
 import com.pengrad.telegrambot.model.Update;
 import com.pengrad.telegrambot.request.SendMessage;
-import com.pengrad.telegrambot.response.SendResponse;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -16,6 +15,7 @@ import java.net.http.HttpResponse;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class Bot {
@@ -25,11 +25,11 @@ public class Bot {
     public static void start(String botToken, String url, String username, String password, String apiToken) {
         TelegramBot bot = new TelegramBot(botToken);
         DatabaseManager dbManager = new DatabaseManager();
-        dbManager.createUsersTable(url, username, password);
+        dbManager.initialize(url, username, password);
 
-        String res = dbManager.getAllUsers();
-        Birthdays bd = new Birthdays();
-        bd.initiate(res, bot, dbManager);
+        List<User> users = dbManager.getAllUsers();
+        BirthdayScheduler scheduler = new BirthdayScheduler(bot, dbManager);
+        scheduler.start();
 
         bot.setUpdatesListener(updates -> {
             for (Update update: updates) {
@@ -91,9 +91,12 @@ public class Bot {
 
                 case "WAITING_FOR_ID_TO_DELETE":
                     try {
-                        Integer id = Integer.parseInt(command);
-                        dbManager.deleteUser(id);
-                        sendMessage(bot, chatId, "Пользователь " + id + " удалён из базы.");
+                        long telegramId = Long.parseLong(command);
+                        if (dbManager.deleteUserByTelegramId(telegramId)) {
+                            sendMessage(bot, chatId, "Пользователь удалён из базы.");
+                        } else {
+                            sendMessage(bot, chatId, "Пользователь не найден.");
+                        }
                     } catch (NumberFormatException e) {
                         sendMessage(bot, chatId, "Неверный id для удаления.");
                     }
@@ -111,17 +114,37 @@ public class Bot {
                 break;
 
             case "/allbirthdays":
-                String res = dbManager.getAllUsers();
-                sendMessage(bot, chatId, res);
+                List<User> users = dbManager.getAllUsers();
+                if (users.isEmpty()) {
+                    sendMessage(bot, chatId, "В базе нет пользователей.");
+                } else {
+                    StringBuilder response = new StringBuilder("Пользователи в базе:\n");
+                    for (int i = 0; i < users.size(); i++) {
+                        User user = users.get(i);
+                        response.append(i + 1).append(". ").append(user.getName())
+                                .append(" - ").append(user.getBirthdayFormatted()).append("\n");
+                    }
+                    sendMessage(bot, chatId, response.toString());
+                }
                 break;
+
 
             case "/deletebirthday":
-                userStates.put(chatId, "WAITING_FOR_ID_TO_DELETE");
-                String res2del = dbManager.getAllUsers();
-                sendMessage(bot, chatId, res2del);
-                sendMessage(bot, chatId, "Напишите id пользователя, которого хотите удалить");
+                List<User> usersForDelete = dbManager.getAllUsers();
+                if (usersForDelete.isEmpty()) {
+                    sendMessage(bot, chatId, "В базе нет пользователей для удаления.");
+                } else {
+                    StringBuilder response = new StringBuilder("Пользователи в базе:\n");
+                    for (int i = 0; i < usersForDelete.size(); i++) {
+                        User user = usersForDelete.get(i);
+                        response.append(i + 1).append(". ").append(user.getName())
+                                .append(" - ").append(user.getBirthdayFormatted()).append("\n");
+                    }
+                    sendMessage(bot, chatId, response.toString());
+                    userStates.put(chatId, "WAITING_FOR_ID_TO_DELETE");
+                    sendMessage(bot, chatId, "Напишите telegram_id пользователя, которого хотите удалить");
+                }
                 break;
-
             case "/поздравь":
                 sendMessage(bot, chatId, "Генерируем поздравление... Пожалуйста, подождите.");
                 String prompt = "Поздравление с днем рождения";
@@ -150,7 +173,6 @@ public class Bot {
     private static String generateGreeting(String prompt, String apiToken) {
         try {
             String jsonRequest = "{\"inputs\":\"" + prompt + "\"}";
-
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create("https://api-inference.huggingface.co/models/microsoft/DialoGPT-large"))
@@ -158,9 +180,7 @@ public class Bot {
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(jsonRequest))
                     .build();
-
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
             return response.body();
         } catch (Exception e) {
             e.printStackTrace();

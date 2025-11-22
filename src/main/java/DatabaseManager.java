@@ -67,7 +67,7 @@ public class DatabaseManager {
 
     public boolean addUser(Long telegramId, String name, LocalDate birthday) {
 
-        String sql = "INSERT INTO users (chat_id, username, birthdate) VALUES (?, ?, ?)" +
+        String sql = "INSERT INTO users (telegram_id, name, birthday) VALUES (?, ?, ?) " +
                 "ON CONFLICT (telegram_id) DO NOTHING";
 
         try (Connection conn = dataSource.getConnection();
