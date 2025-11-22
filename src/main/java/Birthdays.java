@@ -11,6 +11,8 @@ public class Birthdays {
     private BirthdayScheduler scheduler;
     private TelegramBot bot;
     private DatabaseManager database;
+
+
     public void initiate(String args, TelegramBot myBot, DatabaseManager myDatabase) {
         String text = args;
         this.bot = myBot;
