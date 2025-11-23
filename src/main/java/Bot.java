@@ -147,7 +147,7 @@ public class Bot {
                 }
                 break;
             case "/поздравь":
-                sendMessage(bot, chatId, "🎉 Генерируем поздравление... Пожалуйста, подождите.");
+                sendMessage(bot, chatId, " Генерируем поздравление... Пожалуйста, подождите.");
                 String greeting = RuGPT3Generator.generateGreeting(apiToken, userName);
                 sendMessage(bot, chatId, greeting);
                 break;
