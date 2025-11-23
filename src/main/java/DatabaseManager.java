@@ -1,210 +1,293 @@
 import java.sql.*;
-import java.text.SimpleDateFormat;
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+import java.util.logging.Logger;
+import java.util.logging.Level;
+
+
 
 public class DatabaseManager {
-    private static String URL;
-    private static String USER;
-    private static String PASSWORD;
+    private static final Logger LOGGER = Logger.getLogger(DatabaseManager.class.getName());
+    private HikariDataSource dataSource;
 
-    public Connection connect() throws SQLException {
-        return DriverManager.getConnection(URL, USER, PASSWORD);
+    //Инициализация
+    public void initialize(String url, String username, String password) {
+        try{
+            HikariConfig config = new HikariConfig();
+            config.setJdbcUrl(url);
+            config.setUsername(username);
+            config.setPassword(password);
+
+            //настройка пула *няяяяя!!!!!!!!!))!)!)!)!)*
+            config.setMaximumPoolSize(10);
+            config.setMinimumIdle(2);
+            config.setConnectionTimeout(30_000);
+            config.setIdleTimeout(600_000);
+            config.setMaxLifetime(1_800_000);
+
+            config.setConnectionTestQuery("SELECT 1");
+
+            dataSource = new HikariDataSource(config);
+
+            createUsersTable();
+
+            LOGGER.info("Пул успешно инициализирован!!!");
+        } catch (Exception e){
+            LOGGER.log(Level.SEVERE, "пул взорвала ядерная бомба", e);
+        }
     }
 
-    public void createUsersTable(String url, String user, String password) {
-        URL = url;
-        USER = user;
-        PASSWORD = password;
 
-        String createTableSql = "CREATE TABLE IF NOT EXISTS users (" +
-                "id SERIAL PRIMARY KEY, " +
-                "chat_id BIGINT NOT NULL, " +
-                "username VARCHAR(255), " +
-                //"birthdate VARCHAR(255), " +
-                "birthdate DATE, " +
-                "registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)";
+    public void createUsersTable() {
+        String createTableSql = """
+                CREATE TABLE IF NOT EXISTS users (
+                telegram_id BIGINT PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                birthday DATE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """;
 
-        try (Connection conn = connect();
+        try (Connection conn = dataSource.getConnection();
              Statement stmt = conn.createStatement()) {
 
             stmt.execute(createTableSql);
-            System.out.println("Таблица users создана или уже существует");
+            LOGGER.info("Таблица пользователей успешно создана или уже существовала");
 
         } catch (SQLException e) {
-            System.out.println("Ошибка при создании таблицы: " + e.getMessage());
-            e.printStackTrace(); // осуждаю
+            LOGGER.log(Level.SEVERE, "При создании таблицы пользователей произошла ошибка", e);
+            throw  new RuntimeException("Ошибка при создании таблицы", e); //больше не осуждаю
         }
     }
-//string birthday
-    public void addUser(Long chatId, String username, LocalDate birthdate) {
-        ensureTableExists();
 
-        String sql = "INSERT INTO users (chat_id, username, birthdate) VALUES (?, ?, ?)";
 
-        try (Connection conn = connect();
+    public boolean addUser(Long telegramId, String name, LocalDate birthday) {
+
+        String sql = "INSERT INTO users (telegram_id, name, birthday) VALUES (?, ?, ?) " +
+                "ON CONFLICT (telegram_id) DO NOTHING";
+
+        try (Connection conn = dataSource.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
-            pstmt.setLong(1, chatId);
-            pstmt.setString(2, username);
-            pstmt.setDate(3, Date.valueOf(birthdate)); //тяжело
+            pstmt.setLong(1, telegramId);
+            pstmt.setString(2, name);
+            pstmt.setDate(3, Date.valueOf(birthday));
 
-            pstmt.executeUpdate();
-            System.out.println("Пользователь добавлен: chatId=" + chatId + ", name=" + username + ", date=" + birthdate);
+            int rowsAffected = pstmt.executeUpdate();
+            if (rowsAffected > 0) {
+                LOGGER.info(String.format("User added: telegram_id=%d, name=%s, birthday=%s",
+                        telegramId, name, birthday));
+                return true;
+            }
+            return false;
         } catch (SQLException e) {
-            System.out.println("Ошибка при добавлении пользователя: " + e.getMessage());
-            e.printStackTrace();
+            LOGGER.log(Level.SEVERE, "Ошибка при добавлении пользователя: " + telegramId, e);
+            return false;
         }
     }
 
-    public void deleteUser(Integer Id) {
-        String sql = "DELETE FROM users WHERE id = ?";
+    public User getUserByTelegramId(long telegramId) {
+        String sql = "SELECT telegram_id, name, birthday FROM users WHERE telegram_id = ?";
 
-        try (Connection conn = connect();
+        try (Connection conn = dataSource.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
-            pstmt.setLong(1, Id);
-            int affectedRows = pstmt.executeUpdate();
-
-            if (affectedRows > 0) {
-                System.out.println("Пользователь с chat_id " + Id + " удален");
-            } else {
-                System.out.println("Пользователь с chat_id " + Id + " не найден");
-            }
-
-        } catch (SQLException e) {
-            System.out.println("Ошибка при удалении пользователя: " + e.getMessage());
-        }
-    }
-
-    public String getAllUsers() {
-        ensureTableExists();
-
-        StringBuilder result = new StringBuilder();
-        String sql = "SELECT id, chat_id, username, birthdate, registered_at FROM users ORDER BY registered_at DESC";
-
-        try (Connection conn = connect();
-             PreparedStatement pstmt = conn.prepareStatement(sql);
-             ResultSet rs = pstmt.executeQuery()) {
-
-            result.append("📊 Список всех дней рождения:\n\n");
-
-            int count = 0;
-            while (rs.next()) {
-                count++;
-                int id = rs.getInt("id");
-                String username = rs.getString("username");
-                String birthdate = rs.getString("birthdate");
-                Timestamp registeredAt = rs.getTimestamp("registered_at");
-
-                String regDate = new SimpleDateFormat("dd.MM.yyyy HH:mm").format(registeredAt);
-
-                result.append(String.format(
-                        "👤 Запись #%d\n" +
-                                "🆔 ID записи: %d\n" +
-                                "📛 Имя: %s\n" +
-                                "🎂 День рождения: %s\n" +
-                                "📅 Добавлено: %s\n\n",
-                        count,
-                        id,
-                        username != null ? username : "не указан",
-                        birthdate != null ? birthdate : "не указана",
-                        regDate
-                ));
-            }
-
-            if (count == 0) {
-                result.append("❌ В базе данных пока нет записей о днях рождения");
-            } else {
-                result.append("Всего записей: ").append(count);
-            }
-
-        } catch (SQLException e) {
-            result.setLength(0);
-            result.append("Ошибка при получении пользователей: ").append(e.getMessage());
-            e.printStackTrace(); //так кстате давно никто не пишет держу в курсеее
-        }
-
-        return result.toString();
-    }
-
-
-    public Map<Long, String> getUserByBirthday(String date) {
-        ensureTableExists();
-
-        Map<Long, String> users = new HashMap<>();
-        //StringBuilder result = new StringBuilder();
-        String sql = "SELECT chat_id, username FROM users WHERE birthdate = ?"; //не нравится мне все это
-
-
-        try (Connection conn = connect();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
-
-            pstmt.setString(1, date); // пронесло можно считать
+            pstmt.setLong(1, telegramId);
 
             try (ResultSet rs = pstmt.executeQuery()) {
-                while (rs.next()) {
-                    Long chatId = rs.getLong("chat_id");
-                    String username = rs.getString("username");
-                    users.put(chatId, username);
+                if (rs.next()) {
+                    return new User(
+                            rs.getLong("telegram_id"),
+                            rs.getString("name"),
+                            rs.getDate("birthday").toLocalDate()
+                    );
                 }
             }
 
         } catch (SQLException e) {
-            System.out.println("Ошибка при получении пользователей: " + e.getMessage());
-            e.printStackTrace();
+            LOGGER.log(Level.SEVERE, "Failed to get user by telegram_id: " + telegramId, e);
+        }
+
+        return null;
+    }
+
+    public boolean deleteUserByTelegramId(long telegramId) {
+        String sql = "DELETE FROM users WHERE telegram_id = ?";
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setLong(1, telegramId);
+            int affectedRows = pstmt.executeUpdate();
+
+            if (affectedRows > 0) {
+                LOGGER.info("User deleted with telegram_id: " + telegramId);
+                return true;
+            } else {
+                LOGGER.info("User not found for deletion: telegram_id=" + telegramId);
+                return false;
+            }
+
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Failed to delete user with telegram_id: " + telegramId, e);
+            return false;
+        }
+    }
+
+    public List<User> getAllUsers() {
+        List<User> users = new ArrayList<>();
+        String sql = "SELECT telegram_id, name, birthday FROM users ORDER BY name";
+
+        try (Connection conn = dataSource.getConnection();
+             Statement pstmt = conn.createStatement();
+             ResultSet rs = pstmt.executeQuery(sql)) {
+
+            while (rs.next()) {
+                users.add(new User(
+                        rs.getLong("telegram_id"),
+                        rs.getString("name"),
+                        rs.getDate("birthday").toLocalDate()
+                ));
+            }
+
+            LOGGER.info("Retrieved " + users.size() + " users from database");
+
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Failed to get all users", e);
         }
 
         return users;
     }
 
-    public String getUpcomingBirthdays() {
-        ensureTableExists();
+    public List<User> getTodayBirthdays() {
+        List<User> birthdays = new ArrayList<>();
+        String sql = """
+            SELECT telegram_id, name, birthday 
+            FROM users 
+            WHERE EXTRACT(MONTH FROM birthday) = ? 
+            AND EXTRACT(DAY FROM birthday) = ?
+            """;
 
-        StringBuilder result = new StringBuilder();
+        LocalDate today = LocalDate.now();
 
-        String sql = "SELECT username, birthdate FROM users" +
-                "WHERE (EXTRACT(MONTH FROM birthdate) > EXTRACT(MONTH FROM CURRENT_DATE" +
-                "OR (EXTRACT(MONTH FROM birthdate) > EXTRACT(MONTH FROM CURRENT_DATE" +
-                "AND (EXTRACT(MONTH FROM birthdate) >= EXTRACT(MONTH FROM CURRENT_DATE" +
-                "ORDER BY EXTRACT(MONTH FROM birthdate), EXTRACT(DAY FROM birthdate)";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
-        try(Connection conn = connect();
-        PreparedStatement pstmt = conn.prepareStatement(sql);
-        ResultSet rs  = pstmt.executeQuery();){
-            result.append("Ближайшие дни рождения: \n");
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+            pstmt.setInt(1, today.getMonthValue());
+            pstmt.setInt(2, today.getDayOfMonth());
 
-            int counter = 0;
-            while (rs.next()){
-                counter++;
-                String username = rs.getString("username");
-                java.util.Date birthdate = rs.getDate("birthdate");
-                String formattedDate = LocalDate.ofEpochDay(birthdate.getTime() / (24 * 60 * 60 * 1000)).format(formatter);
-
-                result.append(String.format("%s - %s\n", username, formattedDate));
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    birthdays.add(new User(
+                            rs.getLong("telegram_id"),
+                            rs.getString("name"),
+                            rs.getDate("birthday").toLocalDate()
+                    ));
+                }
             }
-            if (counter == 0){
-                result.append("В ближайший месяц нет дней рождений)");
-            }
+
+            LOGGER.info("Found " + birthdays.size() + " birthdays today");
+
         } catch (SQLException e) {
-            throw new RuntimeException(e);
+            LOGGER.log(Level.SEVERE, "Failed to get today's birthdays", e);
         }
-        return result.toString();
+
+        return birthdays;
     }
-    //чиним гит
-    private void ensureTableExists() {
-        try (Connection conn = connect();
-             Statement stmt = conn.createStatement()) {
 
-            String checkSql = "SELECT 1 FROM users LIMIT 1";
-            stmt.executeQuery(checkSql);
+    public boolean userExists(long telegramId) {
+        String sql = "SELECT COUNT(*) FROM users WHERE telegram_id = ?";
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setLong(1, telegramId);
+
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt(1) > 0;
+                }
+            }
 
         } catch (SQLException e) {
-            System.out.println("Таблица users не существует, создаем...");
-            createUsersTable(URL, USER, PASSWORD);
+            LOGGER.log(Level.SEVERE, "Failed to check user existence: " + telegramId, e);
         }
+
+        return false;
+    }
+
+    public boolean updateBirthday(long telegramId, LocalDate birthday) {
+        String sql = "UPDATE users SET birthday = ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?";
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setDate(1, Date.valueOf(birthday));
+            pstmt.setLong(2, telegramId);
+
+            int rowsAffected = pstmt.executeUpdate();
+
+            if (rowsAffected > 0) {
+                LOGGER.info(String.format("Birthday updated for telegram_id=%d: %s", telegramId, birthday));
+                return true;
+            }
+
+            LOGGER.info("User not found for birthday update: telegram_id=" + telegramId);
+            return false;
+
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Failed to update birthday for telegram_id: " + telegramId, e);
+            return false;
+        }
+    }
+
+    public boolean updateName(long telegramId, String name) {
+        String sql = "UPDATE users SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?";
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setString(1, name);
+            pstmt.setLong(2, telegramId);
+
+            int rowsAffected = pstmt.executeUpdate();
+
+            if (rowsAffected > 0) {
+                LOGGER.info(String.format("Name updated for telegram_id=%d: %s", telegramId, name));
+                return true;
+            }
+
+            LOGGER.info("User not found for name update: telegram_id=" + telegramId);
+            return false;
+
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Failed to update name for telegram_id: " + telegramId, e);
+            return false;
+        }
+    }
+    public void shutdown() {
+        if (dataSource != null && !dataSource.isClosed()) {
+            dataSource.close();
+            LOGGER.info("Database connection pool closed");
+        }
+    }
+
+    /**
+     * Получение статистики пула соединений
+     */
+    public String getPoolStats() {
+        if (dataSource != null) {
+            return String.format(
+                    "Active connections: %d, Idle connections: %d, Total connections: %d",
+                    dataSource.getHikariPoolMXBean().getActiveConnections(),
+                    dataSource.getHikariPoolMXBean().getIdleConnections(),
+                    dataSource.getHikariPoolMXBean().getTotalConnections()
+            );
+        }
+        return "Connection pool not initialized";
     }
 }
