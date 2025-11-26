@@ -159,7 +159,7 @@ public class Bot {
                 break;
         }
     }
-
+    //
     private static boolean isValidDate(String date) {
         return date.matches("\\d{2}\\.\\d{2}\\.\\d{4}");
     }
