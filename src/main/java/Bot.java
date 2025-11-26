@@ -147,7 +147,7 @@ public class Bot {
                 }
                 break;
             case "/поздравь":
-                sendMessage(bot, chatId, " Генерируем поздравление... Пожалуйста, подождите.");
+                sendMessage(bot, chatId, " Генерируем поздравление... Пожалуйста, подождите...ня");
                 String greeting = RuGPT3Generator.generateGreeting(apiToken, userName);
                 sendMessage(bot, chatId, greeting);
                 break;
@@ -169,34 +169,4 @@ public class Bot {
         bot.execute(request);
     }
 
-    private static String generateGreeting(String prompt, String apiToken) {
-        try {
-            String jsonRequest = "{\"inputs\":\"" + prompt + "\"}";
-            HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create("https://api-inference.huggingface.co/models/microsoft/DialoGPT-large"))
-                    .header("Authorization", "Bearer " + apiToken)
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(jsonRequest))
-                    .build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            return response.body();
-        } catch (Exception e) {
-            e.printStackTrace();
-            return "Ошибка при генерации поздравления";
-        }
-    }
-
-    private static String parseGeneratedText(String jsonResponse) {
-        try {
-            JsonElement element = JsonParser.parseString(jsonResponse);
-            JsonArray array = element.getAsJsonArray();
-            if (array.size() > 0) {
-                return array.get(0).getAsJsonObject().get("generated_text").getAsString();
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return "Не удалось получить сгенерированный текст";
-    }
 }

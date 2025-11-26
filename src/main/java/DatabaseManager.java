@@ -42,15 +42,14 @@ public class DatabaseManager {
 
 
     public void createUsersTable() {
-        String createTableSql = """
-                CREATE TABLE IF NOT EXISTS users (
-                telegram_id BIGINT PRIMARY KEY,
-                name VARCHAR(255) NOT NULL,
-                birthday DATE NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """;
+        String createTableSql =
+                "CREATE TABLE IF NOT EXISTS users (\n" +
+                        "    telegram_id BIGINT PRIMARY KEY,\n" +
+                        "    name VARCHAR(255) NOT NULL,\n" +
+                        "    birthday DATE NOT NULL,\n" +
+                        "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n" +
+                        "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n" +
+                        ");";
 
         try (Connection conn = dataSource.getConnection();
              Statement stmt = conn.createStatement()) {
@@ -165,12 +164,10 @@ public class DatabaseManager {
 
     public List<User> getTodayBirthdays() {
         List<User> birthdays = new ArrayList<>();
-        String sql = """
-            SELECT telegram_id, name, birthday 
-            FROM users 
-            WHERE EXTRACT(MONTH FROM birthday) = ? 
-            AND EXTRACT(DAY FROM birthday) = ?
-            """;
+        String sql = "SELECT telegram_id, name, birthday " +
+                "FROM users " +
+                "WHERE EXTRACT(MONTH FROM birthday) = ? " +
+                "AND EXTRACT(DAY FROM birthday) = ?";
 
         LocalDate today = LocalDate.now();
 

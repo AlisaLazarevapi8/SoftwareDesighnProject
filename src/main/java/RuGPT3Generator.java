@@ -9,7 +9,7 @@ import java.util.logging.Logger;
 public class RuGPT3Generator {
     private static final Logger LOGGER = Logger.getLogger(RuGPT3Generator.class.getName());
 
-    private static final String MODEL_URL = "https://api-inference.huggingface.co/models/sberbank-ai/rugpt3small_based_on_gpt2";
+    private static final String MODEL_URL = "https://router.huggingface.co/v1/completions";
     private static final String GREETING_PROMPT = "Напиши красивое поздравление с днём рождения:";
     private static final int REQUEST_TIMEOUT_SECONDS = 30;
     private static final int MAX_NEW_TOKENS = 100;
@@ -46,7 +46,12 @@ public class RuGPT3Generator {
     }
     private static String buildJsonRequest(String prompt) {
         return String.format(
-                "{\"inputs\":\"%s\",\"parameters\":{\"max_new_tokens\":%d,\"temperature\":0.7}}",
+                "{" +
+                        "\"model\": \"ai-forever/rugpt3small_based_on_gpt2\"," +
+                        "\"prompt\": \"%s\"," +
+                        "\"max_tokens\": %d," +
+                        "\"temperature\": 0.7" +
+                        "}",
                 escapeJson(prompt),
                 MAX_NEW_TOKENS
         );
@@ -60,31 +65,34 @@ public class RuGPT3Generator {
     }
     private static String parseResponse(String jsonResponse) {
         try {
-            // Простой парсинг JSON без внешних библиотек
-            int startIdx = jsonResponse.indexOf("\"generated_text\":\"");
-            if (startIdx == -1) {
-                startIdx = jsonResponse.indexOf("\\\"generated_text\\\":");
+            int choicesIndex = jsonResponse.indexOf("\"choices\"");
+            if (choicesIndex == -1) {
+                return getFallbackGreeting("друг");
             }
 
-            if (startIdx != -1) {
-                int contentStart = jsonResponse.indexOf(":", startIdx) + 1;
-                int contentEnd = jsonResponse.indexOf("\"", contentStart + 2);
-
-                if (contentEnd > contentStart) {
-                    String text = jsonResponse.substring(contentStart, contentEnd);
-                    // Убираем экранирование
-                    text = text.replace("\\\"", "\"")
-                            .replace("\\n", "\n")
-                            .replace("\\\\", "\\");
-
-                    return text.trim();
-                }
+            int textIndex = jsonResponse.indexOf("\"text\"", choicesIndex);
+            if (textIndex == -1) {
+                return getFallbackGreeting("друг");
             }
+
+            int colonIndex = jsonResponse.indexOf(":", textIndex);
+            int startQuote = jsonResponse.indexOf("\"", colonIndex + 1);
+            int endQuote = jsonResponse.indexOf("\"", startQuote + 1);
+
+            if (startQuote == -1 || endQuote == -1) {
+                return getFallbackGreeting("друг");
+            }
+
+            String text = jsonResponse.substring(startQuote + 1, endQuote);
+            text = text.replace("\\n", "\n")
+                    .replace("\\\"", "\"")
+                    .replace("\\\\", "\\");
+
+            return text.trim();
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Failed to parse response", e);
+            return getFallbackGreeting("друг");
         }
-
-        return "Поздравляю с днём рождения! ";
     }
     //вопросы ко мне есть?
     private static String getFallbackGreeting(String userName) {
