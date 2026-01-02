@@ -1,3 +1,5 @@
+package toDelete;
+
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 
@@ -48,7 +50,7 @@ public class User {
 
     @Override
     public String toString() {
-        return "User{" +
+        return "toDelete.User{" +
                 "telegramId=" + telegramId +
                 ", name='" + name + '\'' +
                 ", birthday=" + birthday +
