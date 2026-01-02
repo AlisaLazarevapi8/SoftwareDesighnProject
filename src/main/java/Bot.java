@@ -3,15 +3,6 @@ import com.pengrad.telegrambot.UpdatesListener;
 import com.pengrad.telegrambot.model.Update;
 import com.pengrad.telegrambot.request.SendMessage;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonParser;
-
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -19,154 +10,169 @@ import java.util.List;
 import java.util.Map;
 
 public class Bot {
-    private static final Map<Long, String> userStates = new HashMap<>();
+
+    private enum State { WAITING_FOR_NAME, WAITING_FOR_DATE, WAITING_FOR_ID_TO_DELETE }
+
+    private static final Map<Long, State> userStates = new HashMap<>();
     private static final Map<Long, String> tempNames = new HashMap<>();
 
     public static void start(String botToken, String url, String username, String password, String apiToken) {
         TelegramBot bot = new TelegramBot(botToken);
+
         DatabaseManager dbManager = new DatabaseManager();
         dbManager.initialize(url, username, password);
 
-        List<User> users = dbManager.getAllUsers();
         BirthdayScheduler scheduler = new BirthdayScheduler(bot, dbManager);
         scheduler.start();
 
         bot.setUpdatesListener(updates -> {
-            for (Update update: updates) {
-                if (update.message() != null && update.message().text() != null) {
-                    Long chatId = update.message().chat().id();
-                    String messageText = update.message().text();
-                    String userName = update.message().chat().firstName();
+            for (Update update : updates) {
+                if (update.message() == null || update.message().text() == null) continue;
 
-                    if (messageText.equals("/start")) {
-                        sendMessage(bot, chatId, "Привет, " + userName + "!\n"
-                                + "Я ваш бот и я умею поздравлять с днем рождения.\n"
-                                + "Как мной пользоваться:\n"
-                                + "/newBirthday - добавить день рождения в базу\n"
-                                + "/allBirthdays - посмотреть все дни рождения в базе\n"
-                                + "/deleteBirthday - удалить день рождения из базы\n"
-                                + "/поздравь - получить сгенерированное поздравление\n");
-                    } else {
-                        handleCommand(bot, chatId, messageText, dbManager, apiToken, userName);
-                    }
+                long chatId = update.message().chat().id();
+                if (update.message().from() == null || update.message().from().id() == null) continue;
+                long ownerUserId = update.message().from().id().longValue();
+
+                String text = update.message().text().trim();
+                String ownerName = update.message().from().firstName();
+
+                // каждый раз обновляем: "чат владельца" = чат, где он сейчас пишет
+                dbManager.upsertOwner(ownerUserId, chatId);
+
+                if (text.equals("/start")) {
+                    sendMessage(bot, chatId,
+                            "Привет, " + ownerName + "!\n" +
+                                    "Я бот, который помогает помнить дни рождения.\n\n" +
+                                    "Команды:\n" +
+                                    "/newBirthday — добавить день рождения\n" +
+                                    "/allBirthdays — показать мой список\n" +
+                                    "/deleteBirthday — удалить по id\n" +
+                                    "/поздравь — сгенерировать поздравление (нейронка)\n");
+                    continue;
                 }
+
+                handleCommand(bot, chatId, ownerUserId, text, dbManager, apiToken, ownerName);
             }
             return UpdatesListener.CONFIRMED_UPDATES_ALL;
         });
     }
 
-    private static void handleCommand(TelegramBot bot, Long chatId, String command,
-                                      DatabaseManager dbManager, String apiToken, String userName) {
-        String userState = userStates.get(chatId);
+    private static void handleCommand(
+            TelegramBot bot,
+            long chatId,
+            long ownerUserId,
+            String command,
+            DatabaseManager dbManager,
+            String apiToken,
+            String ownerName
+    ) {
+        State state = userStates.get(ownerUserId);
 
-        if (userState != null) {
-            switch (userState) {
-                case "WAITING_FOR_NAME":
-                    tempNames.put(chatId, command);
-                    userStates.put(chatId, "WAITING_FOR_DATE");
+        if (state != null) {
+            switch (state) {
+                case WAITING_FOR_NAME : {
+                    tempNames.put(ownerUserId, command);
+                    userStates.put(ownerUserId, State.WAITING_FOR_DATE);
                     sendMessage(bot, chatId, "Когда поздравляем? (дата рождения вида DD.MM.YYYY)");
                     return;
-
-                case "WAITING_FOR_DATE":
-                    String name = tempNames.get(chatId);
+                }
+                case WAITING_FOR_DATE : {
+                    String personName = tempNames.get(ownerUserId);
                     String dateStr = command;
 
-                    if (isValidDate(dateStr)) {
-                        try{
-                            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy");
-                            LocalDate birthdate = LocalDate.parse(dateStr, formatter);
-
-                            dbManager.addUser(chatId, name, birthdate);
-                            sendMessage(bot, chatId, "Ура, день рождения добавлен!");
-                        } catch (Exception e){
-                            sendMessage(bot, chatId, "Что-то сломалось при добавлении.");
-                        }
-                    } else {
-                        sendMessage(bot, chatId, "Неверный формат даты. Используйте DD.MM.YYYY");
+                    if (!isValidDate(dateStr)) {
+                        sendMessage(bot, chatId, "Неверный формат даты. Используй DD.MM.YYYY");
+                        userStates.remove(ownerUserId);
+                        tempNames.remove(ownerUserId);
+                        return;
                     }
 
-                    userStates.remove(chatId);
-                    tempNames.remove(chatId);
-                    return;
-
-
-                case "WAITING_FOR_ID_TO_DELETE":
                     try {
-                        long telegramId = Long.parseLong(command);
-                        if (dbManager.deleteUserByTelegramId(telegramId)) {
-                            sendMessage(bot, chatId, "Пользователь удалён из базы.");
-                        } else {
-                            sendMessage(bot, chatId, "Пользователь не найден.");
-                        }
-                    } catch (NumberFormatException e) {
-                        sendMessage(bot, chatId, "Неверный id для удаления.");
-                    }
+                        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+                        LocalDate birthdate = LocalDate.parse(dateStr, formatter);
 
-                    userStates.remove(chatId);
-                    tempNames.remove(chatId);
+                        long id = dbManager.addBirthday(ownerUserId, personName, birthdate);
+                        sendMessage(bot, chatId, "Добавлено! id=" + id + " — " + personName + " (" + dateStr + ")");
+                    } catch (Exception e) {
+                        sendMessage(bot, chatId, "Что-то сломалось при добавлении :(");
+                    } finally {
+                        userStates.remove(ownerUserId);
+                        tempNames.remove(ownerUserId);
+                    }
                     return;
+                }
+                case WAITING_FOR_ID_TO_DELETE : {
+                    try {
+                        long id = Long.parseLong(command);
+                        boolean deleted = dbManager.deleteBirthday(ownerUserId, id);
+                        sendMessage(bot, chatId, deleted ? "Удалено." : "Не нашла такую запись (или она не твоя).");
+                    } catch (NumberFormatException e) {
+                        sendMessage(bot, chatId, "Нужно число (id записи).");
+                    } finally {
+                        userStates.remove(ownerUserId);
+                        tempNames.remove(ownerUserId);
+                    }
+                    return;
+                }
             }
         }
 
         switch (command.toLowerCase()) {
-            case "/newbirthday":
-                userStates.put(chatId, "WAITING_FOR_NAME");
-                sendMessage(bot, chatId, "Кого поздравляем? (введите имя)");
-                break;
-
-            case "/allbirthdays":
-                List<User> users = dbManager.getAllUsers();
-                if (users.isEmpty()) {
-                    sendMessage(bot, chatId, "В базе нет пользователей.");
-                } else {
-                    StringBuilder response = new StringBuilder("Пользователи в базе:\n");
-                    for (int i = 0; i < users.size(); i++) {
-                        User user = users.get(i);
-                        response.append(i + 1).append(". ").append(user.getName())
-                                .append(" - ").append(user.getBirthdayFormatted()).append("\n");
-                    }
-                    sendMessage(bot, chatId, response.toString());
+            case "/newbirthday" : {
+                userStates.put(ownerUserId, State.WAITING_FOR_NAME);
+                sendMessage(bot, chatId, "Кого поздравляем? (введи имя)");
+            }
+            case "/allbirthdays" : {
+                List<BirthdayEntry> list = dbManager.getBirthdaysByOwner(ownerUserId);
+                if (list.isEmpty()) {
+                    sendMessage(bot, chatId, "У тебя пока пусто. Добавь через /newBirthday");
+                    return;
                 }
-                break;
 
-
-            case "/deletebirthday":
-                List<User> usersForDelete = dbManager.getAllUsers();
-                if (usersForDelete.isEmpty()) {
-                    sendMessage(bot, chatId, "В базе нет пользователей для удаления.");
-                } else {
-                    StringBuilder response = new StringBuilder("Пользователи в базе:\n");
-                    for (int i = 0; i < usersForDelete.size(); i++) {
-                        User user = usersForDelete.get(i);
-                        response.append(i + 1).append(". ").append(user.getName())
-                                .append(" - ").append(user.getBirthdayFormatted()).append("\n");
-                    }
-                    sendMessage(bot, chatId, response.toString());
-                    userStates.put(chatId, "WAITING_FOR_ID_TO_DELETE");
-                    sendMessage(bot, chatId, "Напишите telegram_id пользователя, которого хотите удалить");
+                StringBuilder sb = new StringBuilder("Твой список ДР:\n");
+                for (BirthdayEntry e : list) {
+                    sb.append("id=").append(e.getId())
+                            .append(" — ").append(e.getPersonName())
+                            .append(" — ").append(e.getBirthdayFormatted())
+                            .append("\n");
                 }
-                break;
-            case "/поздравь":
-                sendMessage(bot, chatId, " Генерируем поздравление... Пожалуйста, подождите...ня");
-                String greeting = RuGPT3Generator.generateGreeting(apiToken, userName);
+                sendMessage(bot, chatId, sb.toString());
+            }
+            case "/deletebirthday" : {
+                List<BirthdayEntry> list = dbManager.getBirthdaysByOwner(ownerUserId);
+                if (list.isEmpty()) {
+                    sendMessage(bot, chatId, "Удалять нечего, список пуст.");
+                    return;
+                }
+
+                StringBuilder sb = new StringBuilder("Что удалить? Напиши id:\n");
+                for (BirthdayEntry e : list) {
+                    sb.append("id=").append(e.getId())
+                            .append(" — ").append(e.getPersonName())
+                            .append(" — ").append(e.getBirthdayFormatted())
+                            .append("\n");
+                }
+                sendMessage(bot, chatId, sb.toString());
+                userStates.put(ownerUserId, State.WAITING_FOR_ID_TO_DELETE);
+            }
+            case "/поздравь" : {
+                sendMessage(bot, chatId, "Генерируем поздравление... подожди чуть-чуть.");
+                String greeting = RuGPT3Generator.generateGreeting(apiToken, ownerName);
                 sendMessage(bot, chatId, greeting);
-                break;
-
-            default:
+            }
+            default : {
                 if (command.startsWith("/")) {
                     sendMessage(bot, chatId, "Неизвестная команда: " + command);
                 }
-                break;
+            }
         }
     }
-    //
+
     private static boolean isValidDate(String date) {
         return date.matches("\\d{2}\\.\\d{2}\\.\\d{4}");
     }
 
-    private static void sendMessage(TelegramBot bot, Long chatId, String text) {
-        SendMessage request = new SendMessage(chatId, text);
-        bot.execute(request);
+    private static void sendMessage(TelegramBot bot, long chatId, String text) {
+        bot.execute(new SendMessage(chatId, text));
     }
-
 }
