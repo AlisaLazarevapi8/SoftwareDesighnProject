@@ -1,290 +1,194 @@
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+
 import java.sql.*;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
-import java.util.logging.Logger;
 import java.util.logging.Level;
-
-
+import java.util.logging.Logger;
 
 public class DatabaseManager {
     private static final Logger LOGGER = Logger.getLogger(DatabaseManager.class.getName());
     private HikariDataSource dataSource;
 
-    //Инициализация
     public void initialize(String url, String username, String password) {
-        try{
+        try {
             HikariConfig config = new HikariConfig();
             config.setJdbcUrl(url);
             config.setUsername(username);
             config.setPassword(password);
 
-            //настройка пула *няяяяя!!!!!!!!!))!)!)!)!)*
             config.setMaximumPoolSize(10);
             config.setMinimumIdle(2);
             config.setConnectionTimeout(30_000);
             config.setIdleTimeout(600_000);
             config.setMaxLifetime(1_800_000);
-
             config.setConnectionTestQuery("SELECT 1");
 
             dataSource = new HikariDataSource(config);
 
-            createUsersTable();
+            createOwnersTable();
+            createBirthdaysTable();
 
-            LOGGER.info("Пул успешно инициализирован!!!");
-        } catch (Exception e){
-            LOGGER.log(Level.SEVERE, "пул взорвала ядерная бомба", e);
+            LOGGER.info("DB initialized, tables ready.");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "DB init failed", e);
+            throw new RuntimeException("DB init failed", e);
         }
     }
 
-
-    public void createUsersTable() {
-        String createTableSql =
-                "CREATE TABLE IF NOT EXISTS users (\n" +
-                        "    telegram_id BIGINT PRIMARY KEY,\n" +
-                        "    name VARCHAR(255) NOT NULL,\n" +
-                        "    birthday DATE NOT NULL,\n" +
-                        "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n" +
-                        "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n" +
+    private void createOwnersTable() {
+        String sql =
+                "CREATE TABLE IF NOT EXISTS owners (" +
+                        " owner_user_id BIGINT PRIMARY KEY," +
+                        " notify_chat_id BIGINT NOT NULL," +
+                        " created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                        " updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
                         ");";
-
         try (Connection conn = dataSource.getConnection();
              Statement stmt = conn.createStatement()) {
-
-            stmt.execute(createTableSql);
-            LOGGER.info("Таблица пользователей успешно создана или уже существовала");
-
+            stmt.execute(sql);
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "При создании таблицы пользователей произошла ошибка", e);
-            throw  new RuntimeException("Ошибка при создании таблицы", e); //больше не осуждаю
+            LOGGER.log(Level.SEVERE, "Failed to create owners table", e);
+            throw new RuntimeException(e);
         }
     }
 
-
-    public boolean addUser(Long telegramId, String name, LocalDate birthday) {
-
-        String sql = "INSERT INTO users (telegram_id, name, birthday) VALUES (?, ?, ?) " +
-                "ON CONFLICT (telegram_id) DO NOTHING";
-
+    private void createBirthdaysTable() {
+        String sql =
+                "CREATE TABLE IF NOT EXISTS birthdays (" +
+                        " id BIGSERIAL PRIMARY KEY," +
+                        " owner_user_id BIGINT NOT NULL REFERENCES owners(owner_user_id) ON DELETE CASCADE," +
+                        " person_name VARCHAR(255) NOT NULL," +
+                        " birthday DATE NOT NULL," +
+                        " created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
+                        " updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                        ");";
         try (Connection conn = dataSource.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+             Statement stmt = conn.createStatement()) {
+            stmt.execute(sql);
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Failed to create birthdays table", e);
+            throw new RuntimeException(e);
+        }
+    }
 
-            pstmt.setLong(1, telegramId);
-            pstmt.setString(2, name);
-            pstmt.setDate(3, Date.valueOf(birthday));
+    /** Регистрируем/обновляем владельца и "чат владельца" (куда слать уведомления). */
+    public void upsertOwner(long ownerUserId, long notifyChatId) {
+        String sql =
+                "INSERT INTO owners(owner_user_id, notify_chat_id) VALUES (?, ?) " +
+                        "ON CONFLICT (owner_user_id) DO UPDATE SET " +
+                        " notify_chat_id = EXCLUDED.notify_chat_id," +
+                        " updated_at = CURRENT_TIMESTAMP;";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, ownerUserId);
+            ps.setLong(2, notifyChatId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "upsertOwner failed: owner=" + ownerUserId, e);
+            throw new RuntimeException(e);
+        }
+    }
 
-            int rowsAffected = pstmt.executeUpdate();
-            if (rowsAffected > 0) {
-                LOGGER.info(String.format("User added: telegram_id=%d, name=%s, birthday=%s",
-                        telegramId, name, birthday));
-                return true;
+    /** Добавить день рождения в список владельца. */
+    public long addBirthday(long ownerUserId, String personName, LocalDate birthday) {
+        String sql =
+                "INSERT INTO birthdays(owner_user_id, person_name, birthday) VALUES (?, ?, ?) " +
+                        "RETURNING id;";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, ownerUserId);
+            ps.setString(2, personName);
+            ps.setDate(3, Date.valueOf(birthday));
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) return rs.getLong(1);
             }
-            return false;
+            throw new RuntimeException("No id returned from INSERT");
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Ошибка при добавлении пользователя: " + telegramId, e);
-            return false;
+            LOGGER.log(Level.SEVERE, "addBirthday failed: owner=" + ownerUserId, e);
+            throw new RuntimeException(e);
         }
     }
 
-    public User getUserByTelegramId(long telegramId) {
-        String sql = "SELECT telegram_id, name, birthday FROM users WHERE telegram_id = ?";
-
+    /** Получить список ДР конкретного владельца. */
+    public List<BirthdayEntry> getBirthdaysByOwner(long ownerUserId) {
+        List<BirthdayEntry> list = new ArrayList<>();
+        String sql =
+                "SELECT id, owner_user_id, person_name, birthday " +
+                        "FROM birthdays " +
+                        "WHERE owner_user_id = ? " +
+                        "ORDER BY birthday, id;";
         try (Connection conn = dataSource.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
-
-            pstmt.setLong(1, telegramId);
-
-            try (ResultSet rs = pstmt.executeQuery()) {
-                if (rs.next()) {
-                    return new User(
-                            rs.getLong("telegram_id"),
-                            rs.getString("name"),
-                            rs.getDate("birthday").toLocalDate()
-                    );
-                }
-            }
-
-        } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to get user by telegram_id: " + telegramId, e);
-        }
-
-        return null;
-    }
-
-    public boolean deleteUserByTelegramId(long telegramId) {
-        String sql = "DELETE FROM users WHERE telegram_id = ?";
-
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
-
-            pstmt.setLong(1, telegramId);
-            int affectedRows = pstmt.executeUpdate();
-
-            if (affectedRows > 0) {
-                LOGGER.info("User deleted with telegram_id: " + telegramId);
-                return true;
-            } else {
-                LOGGER.info("User not found for deletion: telegram_id=" + telegramId);
-                return false;
-            }
-
-        } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to delete user with telegram_id: " + telegramId, e);
-            return false;
-        }
-    }
-
-    public List<User> getAllUsers() {
-        List<User> users = new ArrayList<>();
-        String sql = "SELECT telegram_id, name, birthday FROM users ORDER BY name";
-
-        try (Connection conn = dataSource.getConnection();
-             Statement pstmt = conn.createStatement();
-             ResultSet rs = pstmt.executeQuery(sql)) {
-
-            while (rs.next()) {
-                users.add(new User(
-                        rs.getLong("telegram_id"),
-                        rs.getString("name"),
-                        rs.getDate("birthday").toLocalDate()
-                ));
-            }
-
-            LOGGER.info("Retrieved " + users.size() + " users from database");
-
-        } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to get all users", e);
-        }
-
-        return users;
-    }
-
-    public List<User> getTodayBirthdays() {
-        List<User> birthdays = new ArrayList<>();
-        String sql = "SELECT telegram_id, name, birthday " +
-                "FROM users " +
-                "WHERE EXTRACT(MONTH FROM birthday) = ? " +
-                "AND EXTRACT(DAY FROM birthday) = ?";
-
-        LocalDate today = LocalDate.now();
-
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
-
-            pstmt.setInt(1, today.getMonthValue());
-            pstmt.setInt(2, today.getDayOfMonth());
-
-            try (ResultSet rs = pstmt.executeQuery()) {
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, ownerUserId);
+            try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    birthdays.add(new User(
-                            rs.getLong("telegram_id"),
-                            rs.getString("name"),
+                    list.add(new BirthdayEntry(
+                            rs.getLong("id"),
+                            rs.getLong("owner_user_id"),
+                            rs.getString("person_name"),
                             rs.getDate("birthday").toLocalDate()
                     ));
                 }
             }
-
-            LOGGER.info("Found " + birthdays.size() + " birthdays today");
-
+            return list;
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to get today's birthdays", e);
+            LOGGER.log(Level.SEVERE, "getBirthdaysByOwner failed: owner=" + ownerUserId, e);
+            throw new RuntimeException(e);
         }
-
-        return birthdays;
     }
 
-    public boolean userExists(long telegramId) {
-        String sql = "SELECT COUNT(*) FROM users WHERE telegram_id = ?";
+    /** Удалить ДР по id, но только если он принадлежит этому владельцу. */
+    public boolean deleteBirthday(long ownerUserId, long birthdayId) {
+        String sql = "DELETE FROM birthdays WHERE owner_user_id = ? AND id = ?;";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, ownerUserId);
+            ps.setLong(2, birthdayId);
+            return ps.executeUpdate() > 0;
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "deleteBirthday failed: owner=" + ownerUserId + ", id=" + birthdayId, e);
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** Для планировщика: что сегодня празднуем и в какой чат это писать. */
+    public List<BirthdayNotification> getTodayNotifications() {
+        List<BirthdayNotification> result = new ArrayList<>();
+        LocalDate today = LocalDate.now();
+
+        String sql =
+                "SELECT o.notify_chat_id, b.person_name " +
+                        "FROM birthdays b " +
+                        "JOIN owners o ON o.owner_user_id = b.owner_user_id " +
+                        "WHERE EXTRACT(MONTH FROM b.birthday) = ? " +
+                        "  AND EXTRACT(DAY FROM b.birthday) = ? " +
+                        "ORDER BY o.notify_chat_id, b.id;";
 
         try (Connection conn = dataSource.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
-
-            pstmt.setLong(1, telegramId);
-
-            try (ResultSet rs = pstmt.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getInt(1) > 0;
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, today.getMonthValue());
+            ps.setInt(2, today.getDayOfMonth());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    result.add(new BirthdayNotification(
+                            rs.getLong("notify_chat_id"),
+                            rs.getString("person_name")
+                    ));
                 }
             }
-
+            return result;
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to check user existence: " + telegramId, e);
-        }
-
-        return false;
-    }
-
-    public boolean updateBirthday(long telegramId, LocalDate birthday) {
-        String sql = "UPDATE users SET birthday = ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?";
-
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
-
-            pstmt.setDate(1, Date.valueOf(birthday));
-            pstmt.setLong(2, telegramId);
-
-            int rowsAffected = pstmt.executeUpdate();
-
-            if (rowsAffected > 0) {
-                LOGGER.info(String.format("Birthday updated for telegram_id=%d: %s", telegramId, birthday));
-                return true;
-            }
-
-            LOGGER.info("User not found for birthday update: telegram_id=" + telegramId);
-            return false;
-
-        } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to update birthday for telegram_id: " + telegramId, e);
-            return false;
+            LOGGER.log(Level.SEVERE, "getTodayNotifications failed", e);
+            throw new RuntimeException(e);
         }
     }
 
-    public boolean updateName(long telegramId, String name) {
-        String sql = "UPDATE users SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?";
-
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
-
-            pstmt.setString(1, name);
-            pstmt.setLong(2, telegramId);
-
-            int rowsAffected = pstmt.executeUpdate();
-
-            if (rowsAffected > 0) {
-                LOGGER.info(String.format("Name updated for telegram_id=%d: %s", telegramId, name));
-                return true;
-            }
-
-            LOGGER.info("User not found for name update: telegram_id=" + telegramId);
-            return false;
-
-        } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to update name for telegram_id: " + telegramId, e);
-            return false;
-        }
-    }
     public void shutdown() {
         if (dataSource != null && !dataSource.isClosed()) {
             dataSource.close();
-            LOGGER.info("Database connection pool closed");
         }
-    }
-
-    /**
-     * Получение статистики пула соединений
-     */
-    public String getPoolStats() {
-        if (dataSource != null) {
-            return String.format(
-                    "Active connections: %d, Idle connections: %d, Total connections: %d",
-                    dataSource.getHikariPoolMXBean().getActiveConnections(),
-                    dataSource.getHikariPoolMXBean().getIdleConnections(),
-                    dataSource.getHikariPoolMXBean().getTotalConnections()
-            );
-        }
-        return "Connection pool not initialized";
     }
 }

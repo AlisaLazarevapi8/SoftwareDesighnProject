@@ -2,11 +2,8 @@ import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.request.SendMessage;
 
 import java.time.Duration;
-import java.time.LocalDate;
 import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -20,76 +17,56 @@ public class BirthdayScheduler {
     private final TelegramBot bot;
     private final DatabaseManager database;
 
-    private  static final int CHECK_HOUR = 9;
+    private static final int CHECK_HOUR = 9;
     private static final int CHECK_MINUTE = 0;
 
-    public BirthdayScheduler(TelegramBot myBot, DatabaseManager myDatabase) {
+    public BirthdayScheduler(TelegramBot bot, DatabaseManager database) {
         this.scheduler = Executors.newScheduledThreadPool(1);
-        this.bot = myBot;
-        this.database = myDatabase;
+        this.bot = bot;
+        this.database = database;
     }
 
     public void start() {
-        LOGGER.info("Начало работы планировщика");
+        LOGGER.info("BirthdayScheduler started");
         scheduleDailyCheck();
     }
 
     private void scheduleDailyCheck() {
-        LocalTime targetTime = LocalTime.of(CHECK_HOUR, CHECK_MINUTE);
+        LocalTime target = LocalTime.of(CHECK_HOUR, CHECK_MINUTE);
         LocalTime now = LocalTime.now();
 
-        long initialDelay;
-        if (now.isBefore(targetTime)) {
-            initialDelay = Duration.between(now, targetTime).toMinutes();
-        } else {
-            initialDelay = Duration.between(now, targetTime.plusHours(24)).toMinutes();
-        }
-//
+        long initialDelayMinutes = now.isBefore(target)
+                ? Duration.between(now, target).toMinutes()
+                : Duration.between(now, target.plusHours(24)).toMinutes();
+
         scheduler.scheduleAtFixedRate(
                 this::checkBirthdays,
-                initialDelay,
-                24 * 60,
+                initialDelayMinutes,
+                24 * 60L,
                 TimeUnit.MINUTES
         );
     }
 
     private void checkBirthdays() {
         try {
-            LOGGER.info("проверка дней рождений");
-
-            List<User> todayBirthdays = database.getTodayBirthdays();
-
-            if (todayBirthdays.isEmpty()) {
-                LOGGER.info("Сегодня нет дней рождений");
+            List<BirthdayNotification> notifications = database.getTodayNotifications();
+            if (notifications.isEmpty()) {
+                LOGGER.info("No birthdays today");
                 return;
             }
 
-            LOGGER.info("Сегодня " + todayBirthdays.size() + " дней рождений");
-
-            for (User user : todayBirthdays) {
-                sendCongratulation(user);
+            for (BirthdayNotification n : notifications) {
+                String msg = "Сегодня день рождения у " + n.getPersonName() + "! Поздравляю! 🎂";
+                bot.execute(new SendMessage(n.getNotifyChatId(), msg));
             }
 
+            LOGGER.info("Sent " + notifications.size() + " birthday notifications");
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Ошибка при проверке дней рождений", e);
-        }
-    }
-
-    private void sendCongratulation(User user) {
-        try {
-            String message = String.format(" Сегодня день рождения у %s! Поздравляю! 🎂", user.getName());
-            SendMessage request = new SendMessage(user.getTelegramId(), message);
-
-            bot.execute(request);
-            LOGGER.info("Congratulation sent to " + user.getName() + " (ID: " + user.getTelegramId() + ")");
-
-        } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to send congratulation to user: " + user.getTelegramId(), e);
+            LOGGER.log(Level.SEVERE, "checkBirthdays failed", e);
         }
     }
 
     public void stop() {
-        LOGGER.info("Stopping birthday scheduler");
         scheduler.shutdown();
         try {
             if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
