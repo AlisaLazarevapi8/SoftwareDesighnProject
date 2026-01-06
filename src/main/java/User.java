@@ -1,5 +1,3 @@
-package toDelete;
-
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 
@@ -9,7 +7,7 @@ public class User {
     private String name;
     private LocalDate birthday;
 
-    public User(long telegramId, String name, LocalDate birthday) {
+    public User(int id, long telegramId, String name, LocalDate birthday) {
         this.telegramId = telegramId;
         this.name = name;
         this.birthday = birthday;
