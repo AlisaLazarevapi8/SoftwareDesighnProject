@@ -11,15 +11,15 @@ repositories {
 }
 
 dependencies {
-    // JUnit 5 вместо JUnit 4
-    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.3'
-    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.9.3'
+    // JUnit 5
+    testImplementation platform('org.junit:junit-bom:5.9.3')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
 
-    // Mockito для мокинга
+    // Mockito
     testImplementation 'org.mockito:mockito-core:5.3.1'
     testImplementation 'org.mockito:mockito-junit-jupiter:5.3.1'
 
-    // AssertJ для более читаемых ассертов (опционально)
+    // AssertJ
     testImplementation 'org.assertj:assertj-core:3.24.2'
 
     implementation 'com.github.pengrad:java-telegram-bot-api:6.8.0'
@@ -43,10 +43,14 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
 
-// Настройка для JUnit 5
 test {
     useJUnitPlatform()
     testLogging {
-        events "passed", "skipped", "failed"
+        events "passed", "skipped", "failed", "standard_out", "standard_error"
     }
+
+    // Убедитесь, что Gradle находит все тесты
+    scanForTestClasses = true
+    include '**/*Test.class'
+    exclude '**/*Abstract*Test.class'
 }

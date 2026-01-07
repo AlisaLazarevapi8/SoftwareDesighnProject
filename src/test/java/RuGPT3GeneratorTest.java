@@ -31,8 +31,6 @@ class RuGPT3GeneratorTest {
         String jsonResponse = "{\"choices\":[{\"text\":\"Поздравляю, Тест!\"}]}";
 
         // When
-        // Здесь нужно мокать статические методы HttpClient
-        // В реальном тесте используем MockedStatic
         String result = RuGPT3Generator.generateGreeting(apiToken, "Тест");
 
         // Then
